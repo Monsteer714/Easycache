@@ -16,10 +16,10 @@ namespace EasyCache {
     public:
         ArcCache(unsigned long capacity, unsigned long transformThreshold = 2) : capacity_(capacity),
                                                                              transformThreshold_(transformThreshold),
-                                                                             lru(std::make_unique<EasyCache::ArcLruPart<
+                                                                             lru_(std::make_unique<EasyCache::ArcLruPart<
                                                                                  Key, Value>>(
                                                                                  capacity_, transformThreshold_)),
-                                                                             lfu(std::make_unique<EasyCache::ArcLfuPart<
+                                                                             lfu_(std::make_unique<EasyCache::ArcLfuPart<
                                                                                  Key, Value>>(
                                                                                  capacity_, transformThreshold_)) {
         }
@@ -31,14 +31,14 @@ namespace EasyCache {
 
             bool putToLfu = false;
 
-            if (lru->get(key, value, putToLfu)) {
+            if (lru_->get(key, value, putToLfu)) {
                 if (putToLfu) {
-                    lfu->put(key, value);
+                    lfu_->put(key, value);
                 }
                 return true;
             }
 
-            return lfu->get(key, value);
+            return lfu_->get(key, value);
         }
 
         Value get(Key key) override {
@@ -50,26 +50,26 @@ namespace EasyCache {
         void put(Key key, Value value) override {
             checkGhost(key);
 
-            lru->put(key, value);
-            if (lfu->containsKey(key)) {
-                lfu->put(key, value);
+            lru_->put(key, value);
+            if (lfu_->contain(key)) {
+                lfu_->put(key, value);
             }
         }
     private:
         unsigned long capacity_ = {};
         unsigned long transformThreshold_ = {};
-        std::unique_ptr<EasyCache::ArcLruPart<Key, Value>> lru = {};
-        std::unique_ptr<EasyCache::ArcLfuPart<Key, Value>> lfu = {};
+        std::unique_ptr<EasyCache::ArcLruPart<Key, Value>> lru_ = {};
+        std::unique_ptr<EasyCache::ArcLfuPart<Key, Value>> lfu_ = {};
 
         void checkGhost(Key key) {
-            if (lru->checkGhost(key)) {
-                if (lfu->decreaseCapacity()) {
-                    lru->increaseCapacity();
+            if (lru_->checkGhost(key)) {
+                if (lfu_->decreaseCapacity()) {
+                    lru_->increaseCapacity();
                 }
             }
-            if (lfu->checkGhost(key)) {
-                if (lru->decreaseCapacity()) {
-                    lfu->increaseCapacity();
+            if (lfu_->checkGhost(key)) {
+                if (lru_->decreaseCapacity()) {
+                    lfu_->increaseCapacity();
                 }
             }
         }

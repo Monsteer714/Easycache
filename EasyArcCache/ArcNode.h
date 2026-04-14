@@ -19,6 +19,8 @@ namespace EasyCache {
         std::shared_ptr<ArcNode<Key, Value>> next_;
 
     public:
+        ArcNode() {next_ = nullptr;}
+
         ArcNode(const Key& key, const Value& value) : key_(key), value_(value) {
         }
 

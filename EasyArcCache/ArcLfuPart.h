@@ -6,286 +6,204 @@
 #define CACHE_ARCLFUPART_H
 #include <mutex>
 #include <unordered_map>
+#include <list>
+#include <map>
 
 #include "ArcNode.h"
 
 namespace EasyCache {
     template <typename Key, typename Value>
-    class ArcLfuPart;
-
-    template <typename Key, typename Value>
-    class ArcFreqList {
-    private:
-        using Node = EasyCache::ArcNode<Key, Value>;
-        using NodePtr = std::shared_ptr<Node>;
-        NodePtr mainHead_;
-        NodePtr mainTail_;
-
+    class ArcLfuPart {
     public:
-        ArcFreqList() {
-            mainHead_ = std::make_shared<Node>(Key(), Value());
-            mainTail_ = std::make_shared<Node>(Key(), Value());
+        using NodeType = ArcNode<Key, Value>;
+        using NodePtr = std::shared_ptr<NodeType>;
+        using NodeMap = std::unordered_map<Key, NodePtr>;
+        using FreqMap = std::map<size_t, std::list<NodePtr>>;
 
-            mainHead_->next_ = mainTail_;
-            mainTail_->prev_ = mainHead_;
+        ArcLfuPart(size_t capacity, size_t transformThreshold)
+            : capacity_(capacity)
+              , ghostCapacity_(capacity)
+              , transformThreshold_(transformThreshold)
+              , minFreq_(0) {
+            initializeLists();
         }
 
-        void removeNode(NodePtr node) {
-            auto prev = node->prev_.lock();
-            auto next = node->next_;
-            if (!prev || !next) {
-                return;
-            }
-
-            prev->next_ = next;
-            next->prev_ = prev;
-        }
-
-        NodePtr getFirstNode() {
-            return mainHead_->next_;
-        }
-
-        NodePtr getLastNode() {
-            return mainTail_->prev_.lock();
-        }
-
-        bool isEmpty() {
-            return mainHead_->next_ == mainTail_;
-        }
-
-        void putFront(NodePtr node) {
-            node->next_ = mainHead_->next_;
-            node->prev_ = mainHead_;
-            mainHead_->next_->prev_ = node;
-            mainHead_->next_ = node;
-        }
-
-        friend class ArcLfuPart<Key, Value>;
-    };
-
-    template <typename Key, typename Value>
-    class ArcLfuPart  {
-    public:
-        ArcLfuPart(size_t capacity, size_t maxAverageFreq = 1000000) : capacity_(capacity), min_freq_(0),
-                                                                         maxAverageFreq_(maxAverageFreq) {
-            initList();
-        };
-
-        bool get(Key key, Value& value)  {
-            std::lock_guard<std::mutex> lock(mutex_);
-            if (!mainMap_.contains(key)) {
+        bool put(Key key, Value value) {
+            if (capacity_ == 0)
                 return false;
-            }
-
-            auto node = mainMap_[key];
-            auto temp = freqMap_[node->getAccessCount()];
-            temp->removeNode(node);
-            if (temp->isEmpty() && node->getAccessCount() == min_freq_) {
-                min_freq_++;
-            }
-            node->increaseAccessCount();
-            if (freqMap_.contains(node->getAccessCount())) {
-                freqMap_[node->getAccessCount()]->putFront(node);
-            }
-            else {
-                auto freq_map = std::make_shared<ArcFreqList<Key, Value>>();
-                freqMap_[node->getAccessCount()] = freq_map;
-                freq_map->putFront(node);
-            }
-            value = mainMap_[key]->value_;
-            increaseFreq();
-            return true;
-        }
-
-        Value get(Key key) {
-            Value value{};
-            get(key, value);
-            return value;
-        }
-
-        void put(Key key, Value value) {
-            if (mainMap_.contains(key)) {
-                get(key, value);
-                mainMap_[key]->value_ = value;
-                return;
-            }
 
             std::lock_guard<std::mutex> lock(mutex_);
-            NodePtr node = mainMap_[key];
-
-            if (mainMap_.size() == capacity_) {
-                auto temp = freqMap_[min_freq_];
-                NodePtr deleteNode = temp->getLastNode();
-                temp->removeNode(deleteNode);
-                mainMap_.erase(deleteNode->key_);
-                decreaseFreq(deleteNode->getAccessCount());
-                putRecentInGhost(deleteNode);
+            auto it = mainCache_.find(key);
+            if (it != mainCache_.end()) {
+                return updateExistingNode(it->second, value);
             }
-
-            NodePtr newNode = std::make_shared<Node>(key, value);
-            mainMap_[key] = newNode;
-            min_freq_ = 1;
-            if (freqMap_.contains(min_freq_)) {
-                freqMap_[min_freq_]->putFront(newNode);
-            }
-            else {
-                auto freqList = std::make_shared<ArcFreqList<Key, Value>>();
-                freqMap_[min_freq_] = freqList;
-                freqList->putFront(newNode);
-            }
-            increaseFreq();
+            return addNewNode(key, value);
         }
 
-        bool checkGhost(const Key& key) {
-            auto it = ghostMap_.find(key);
-            if (it == ghostMap_.end()) {
-                return false;
+        bool get(Key key, Value& value) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto it = mainCache_.find(key);
+            if (it != mainCache_.end()) {
+                updateNodeFrequency(it->second);
+                value = it->second->getValue();
+                return true;
             }
-            auto node = it->second;
-            removeGhostNode(node);
-            ghostMap_.erase(node->getKey());
-            return true;
+            return false;
+        }
+
+        bool contain(Key key) {
+            return mainCache_.find(key) != mainCache_.end();
+        }
+
+        bool checkGhost(Key key) {
+            auto it = ghostCache_.find(key);
+            if (it != ghostCache_.end()) {
+                removeFromGhost(it->second);
+                ghostCache_.erase(it);
+                return true;
+            }
+            return false;
         }
 
         void increaseCapacity() {
-            capacity_++;
+            ++capacity_;
         }
 
         bool decreaseCapacity() {
-            if (capacity_ <= 0) {
-                return false;
+            if (capacity_ <= 0) return false;
+            if (mainCache_.size() == capacity_) {
+                evictLeastFrequent();
             }
-            if (mainMap_.size() >= capacity_) {
-                auto temp = freqMap_[min_freq_];
-                NodePtr deleteNode = temp->getLastNode();
-                temp->removeNode(deleteNode);
-                mainMap_.erase(deleteNode->key_);
-                decreaseFreq(deleteNode->getAccessCount());
-                putRecentInGhost(deleteNode);
-            }
-            capacity_--;
+            --capacity_;
             return true;
         }
 
-        bool containsKey(const Key& key) {
-            return mainMap_.find(key) != mainMap_.end();
-        }
     private:
-        using Node = ArcNode<Key, Value>;
-        using NodePtr = std::shared_ptr<Node>;
-        using NodeMap = std::unordered_map<Key, NodePtr>;
-        using FreqMap = std::unordered_map<size_t, std::shared_ptr<ArcFreqList<Key, Value>>>;
-        size_t capacity_{0};
-        size_t min_freq_ = {0};
-        size_t maxAverageFreq_ = {0};
-        size_t curAverageFreq_ = {0};
-        size_t curTotalFreq_ = {0};
-        NodeMap mainMap_;
-        NodeMap ghostMap_;
-
-        NodePtr ghostHead_;
-        NodePtr ghostTail_;
-
-        FreqMap freqMap_;
-        std::mutex mutex_;
-
-        void initList() {
-            ghostHead_ = std::make_shared<Node>(Key(), Value());
-            ghostTail_ = std::make_shared<Node>(Key(), Value());
-
+        void initializeLists() {
+            ghostHead_ = std::make_shared<NodeType>();
+            ghostTail_ = std::make_shared<NodeType>();
             ghostHead_->next_ = ghostTail_;
             ghostTail_->prev_ = ghostHead_;
         }
 
-        void putRecentInGhost(NodePtr node) {
-            node->setAccessCount(1);
-
-            node->next_ = ghostHead_->next_;
-            node->prev_ = ghostHead_;
-            ghostHead_->next_ = node;
-            ghostHead_->next_->prev_ = node;
-
-            ghostMap_.emplace(node->getKey(), node);
+        bool updateExistingNode(NodePtr node, const Value& value) {
+            node->setValue(value);
+            updateNodeFrequency(node);
+            return true;
         }
 
-        bool containInGhost(const Key& key) {
-            return ghostMap_.find(key) != ghostMap_.end();
+        bool addNewNode(const Key& key, const Value& value) {
+            if (mainCache_.size() >= capacity_) {
+                evictLeastFrequent();
+            }
+
+            NodePtr newNode = std::make_shared<NodeType>(key, value);
+            mainCache_[key] = newNode;
+
+            // 将新节点添加到频率为1的列表中
+            if (freqMap_.find(1) == freqMap_.end()) {
+                freqMap_[1] = std::list<NodePtr>();
+            }
+            freqMap_[1].push_back(newNode);
+            minFreq_ = 1;
+
+            return true;
         }
 
-        void removeGhostNode(NodePtr node) {
-            auto next = node->next_;
-            auto prev = node->prev_.lock();
+        void updateNodeFrequency(NodePtr node) {
+            size_t oldFreq = node->getAccessCount();
+            node->increaseAccessCount();
+            size_t newFreq = node->getAccessCount();
 
-            if (!prev || !next) {
+            // 从旧频率列表中移除
+            auto& oldList = freqMap_[oldFreq];
+            oldList.remove(node);
+            if (oldList.empty()) {
+                freqMap_.erase(oldFreq);
+                if (oldFreq == minFreq_) {
+                    minFreq_ = newFreq;
+                }
+            }
+
+            // 添加到新频率列表
+            if (freqMap_.find(newFreq) == freqMap_.end()) {
+                freqMap_[newFreq] = std::list<NodePtr>();
+            }
+            freqMap_[newFreq].push_back(node);
+        }
+
+        void evictLeastFrequent() {
+            if (freqMap_.empty())
                 return;
-            }
 
-            next->prev_ = prev;
-            prev->next_ = next;
-        }
-
-
-        void increaseFreq() {
-            curTotalFreq_++;
-            if (mainMap_.empty()) {
-                curAverageFreq_ = 0;
-            }
-            else {
-                curAverageFreq_ = curTotalFreq_ / mainMap_.size();
-            }
-
-            if (curAverageFreq_ > maxAverageFreq_) {
-                handleAverageFreq();
-            }
-        }
-
-        void decreaseFreq(size_t num) {
-            curTotalFreq_ -= num;
-            if (mainMap_.empty()) {
-                curAverageFreq_ = 0;
-            }
-            else {
-                curAverageFreq_ = curTotalFreq_ / mainMap_.size();
-            }
-        }
-
-        void handleAverageFreq() {
-            if (mainMap_.empty()) {
+            // 获取最小频率的列表
+            auto& minFreqList = freqMap_[minFreq_];
+            if (minFreqList.empty())
                 return;
+
+            // 移除最少使用的节点
+            NodePtr leastNode = minFreqList.front();
+            minFreqList.pop_front();
+
+            // 如果该频率的列表为空，则删除该频率项
+            if (minFreqList.empty()) {
+                freqMap_.erase(minFreq_);
+                // 更新最小频率
+                if (!freqMap_.empty()) {
+                    minFreq_ = freqMap_.begin()->first;
+                }
             }
-            for (auto it : mainMap_) {
-                auto node = it.second;
 
-                if (!node) {
-                    continue;
-                }
-                //remove from list
-                auto list = freqMap_[node->getAccessCount()];
-                list->removeNode(node);
+            // 将节点移到幽灵缓存
+            if (ghostCache_.size() >= ghostCapacity_) {
+                removeOldestGhost();
+            }
+            addToGhost(leastNode);
 
-                size_t decay = maxAverageFreq_ / 2;
+            // 从主缓存中移除
+            mainCache_.erase(leastNode->getKey());
+        }
 
-                int oldFreq = node->getAccessCount();
-
-                node->setAccessCount(node->getAccessCount() - decay);
-
-                if (node->getAccessCount() <= 0) {
-                    node->setAccessCount(1);
-                }
-
-                curTotalFreq_ += node->getAccessCount() - oldFreq;
-
-                //add to list
-                if (freqMap_.contains(node->getAccessCount())) {
-                    freqMap_[node->getAccessCount()]->putFront(node);
-                }
-                else {
-                    auto freqList = std::make_shared<ArcFreqList<Key, Value>>();
-                    freqMap_[node->getAccessCount()] = freqList;
-                    freqList->putFront(node);
-                }
+        void removeFromGhost(NodePtr node) {
+            if (!node->prev_.expired() && node->next_) {
+                auto prev = node->prev_.lock();
+                prev->next_ = node->next_;
+                node->next_->prev_ = node->prev_;
+                node->next_ = nullptr; // 清空指针，防止悬垂引用
             }
         }
+
+        void addToGhost(NodePtr node) {
+            node->next_ = ghostTail_;
+            node->prev_ = ghostTail_->prev_;
+            if (!ghostTail_->prev_.expired()) {
+                ghostTail_->prev_.lock()->next_ = node;
+            }
+            ghostTail_->prev_ = node;
+            ghostCache_[node->getKey()] = node;
+        }
+
+        void removeOldestGhost() {
+            NodePtr oldestGhost = ghostHead_->next_;
+            if (oldestGhost != ghostTail_) {
+                removeFromGhost(oldestGhost);
+                ghostCache_.erase(oldestGhost->getKey());
+            }
+        }
+
+    private:
+        size_t capacity_;
+        size_t ghostCapacity_;
+        size_t transformThreshold_;
+        size_t minFreq_;
+        std::mutex mutex_;
+
+        NodeMap mainCache_;
+        NodeMap ghostCache_;
+        FreqMap freqMap_;
+
+        NodePtr ghostHead_;
+        NodePtr ghostTail_;
     };
 };
 #endif //CACHE_ARCLFUPART_H

@@ -257,6 +257,6 @@ void testWorkloadShift() {
 
 int main() {
     testHotDataAccess();
-    testWorkloadShift();
     testLoopPattern();
+    testWorkloadShift();
 }

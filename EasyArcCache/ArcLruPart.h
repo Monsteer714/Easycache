@@ -103,19 +103,19 @@ namespace EasyCache {
         void initLists() {
             mainHead_ = std::make_shared<Node>(Key(), Value());
             mainTail_ = std::make_shared<Node>(Key(), Value());
-            mainHead_->prev_ = mainTail_;
-            mainTail_->next_ = mainHead_;
+            mainHead_->next_ = mainTail_;
+            mainTail_->prev_ = mainHead_;
 
             ghostHead_ = std::make_shared<Node>(Key(), Value());
             ghostTail_ = std::make_shared<Node>(Key(), Value());
-            ghostHead_->prev_ = ghostTail_;
-            ghostTail_->next_ = ghostHead_;
+            ghostHead_->next_ = ghostTail_;
+            ghostTail_->prev_ = ghostHead_;
         }
 
         void updateNodeToRecent(NodePtr node) {
             node->increaseAccessCount();
             removeFromList(node);
-            putGhostRecent(node);
+            putMainRecent(node);
         }
 
         void removeFromList(NodePtr node) {
@@ -154,19 +154,21 @@ namespace EasyCache {
         }
 
         void putMainRecent(NodePtr node) {
-            node->next_ = mainHead_->next_;
-            node->prev_ = mainHead_;
+            NodePtr temp = mainHead_->next_;
             mainHead_->next_ = node;
-            mainHead_->next_->prev_ = node;
+            temp->prev_ = node;
+            node->next_ = temp;
+            node->prev_ = mainHead_;
         }
 
         void putGhostRecent(NodePtr node) {
             node->setAccessCount(1);
 
-            node->next_ = ghostHead_->next_;
-            node->prev_ = ghostHead_;
+            NodePtr temp = ghostHead_->next_;
             ghostHead_->next_ = node;
-            ghostHead_->next_->prev_ = node;
+            temp->prev_ = node;
+            node->next_ = temp;
+            node->prev_ = ghostHead_;
 
             ghostMap_.emplace(node->key_, node);
         }
