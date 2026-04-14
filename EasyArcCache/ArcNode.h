@@ -5,19 +5,16 @@
 #ifndef CACHE_ARCNODE_H
 #define CACHE_ARCNODE_H
 
-#include <stdio.h>
 #include <memory>
 
-#include "ArcLfuPart.h"
-#include "ArcLruPart.h"
-
 namespace EasyCache {
+
     template <typename Key, typename Value>
     class ArcNode {
-    private:
+    public:
         Key key_;
         Value value_;
-        size_t accessCount_ = {};
+        size_t accessCount_ = {1};
         std::weak_ptr<ArcNode<Key, Value>> prev_;
         std::shared_ptr<ArcNode<Key, Value>> next_;
 
@@ -45,6 +42,10 @@ namespace EasyCache {
             accessCount_++;
         }
 
+        void setAccessCount(const size_t& count) {
+            this->accessCount_ = count;
+        }
+
         std::shared_ptr<ArcNode<Key, Value>> getNext() const {
             return next_;
         }
@@ -53,8 +54,8 @@ namespace EasyCache {
             return prev_;
         }
 
-        friend class EasyCache::ArcLruPart<Key, Value>;
-        friend class EasyCache::ArcLfuPart<Key, Value>;
+        template<typename K, typename V> friend class ArcLruPart;
+        template<typename K, typename V> friend class ArcLfuPart;
     };
 };
 #endif //CACHE_ARCNODE_H

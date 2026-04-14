@@ -234,17 +234,17 @@ namespace EasyCache {
             }
         }
 
-        bool get(Key key, Value& value) {
+        bool get(Key key, Value& value) override {
             size_t index = Hash(key) % slice_num_;
             return caches_[index]->get(key, value);
         }
 
-        void put(Key key, Value value) {
+        void put(Key key, Value value) override {
             size_t index = Hash(key) % slice_num_;
             caches_[index]->put(key, value);
         }
 
-        Value get(Key key) {
+        Value get(Key key) override {
             Value value{};
             size_t index = Hash(key) % slice_num_;
             caches_[index]->get(key, value);

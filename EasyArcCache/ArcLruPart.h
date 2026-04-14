@@ -4,10 +4,10 @@
 
 #ifndef CACHE_ARCLRUPART_H
 #define CACHE_ARCLRUPART_H
+#include <mutex>
 #include <unordered_map>
 
 #include "ArcNode.h"
-
 namespace EasyCache {
     template <typename Key, typename Value>
     class ArcLruPart {
@@ -16,11 +16,12 @@ namespace EasyCache {
             capacity_ = capacity;
             transformThreshold_ = transformThreshold;
             initLists();
-            NodeMap mainMap_ = std::unordered_map<Key, NodePtr>();
-            NodeMap ghostMap_ = std::unordered_map<Key, NodePtr>();
+            mainMap_ = std::unordered_map<Key, NodePtr>();
+            ghostMap_ = std::unordered_map<Key, NodePtr>();
         };
 
-        bool get(Key key, Value &value) {
+        bool get(Key key, Value &value, bool& shouldTransform) {
+            std::lock_guard<std::mutex> lock(mutex_);
             if (!containInMain(key)) {
                 return false;
             }
@@ -28,6 +29,8 @@ namespace EasyCache {
             auto node = mainMap_[key];
             updateNodeToRecent(node);
             value = node->getValue();
+
+            shouldTransform = node->getAccessCount() >= transformThreshold_;
 
             return true;
         }
@@ -39,6 +42,7 @@ namespace EasyCache {
         }
 
         void put(Key key, Value value) {
+            std::lock_guard<std::mutex> lock(mutex_);
             if (containInMain(key)) {
                 auto node = mainMap_[key];
                 node->setValue(value);
@@ -47,7 +51,7 @@ namespace EasyCache {
             }
 
             NodePtr newNode = std::make_shared<Node>(key, value);
-            mainMap_[key] = newNode;
+            mainMap_.emplace(key, newNode);
             putMainRecent(newNode);
 
             if (mainMap_.size() > capacity_) {
@@ -65,10 +69,26 @@ namespace EasyCache {
             ghostMap_.erase(key);
             return true;
         }
+
+        void increaseCapacity() {
+            capacity_++;
+        }
+
+        bool decreaseCapacity() {
+            if (capacity_ <= 0) {
+                return false;
+            }
+            if (mainMap_.size() >= capacity_ ) {
+                removeLeastRecentInMain();
+            }
+            capacity_--;
+            return true;
+        }
     private:
         using Node = EasyCache::ArcNode<Key, Value>;
         using NodePtr = std::shared_ptr<Node>;
         using NodeMap = std::unordered_map<Key, NodePtr>;
+        std::mutex mutex_;
         size_t capacity_ = {};
         size_t transformThreshold_ = {};
         NodeMap mainMap_ = {};
@@ -93,6 +113,7 @@ namespace EasyCache {
         }
 
         void updateNodeToRecent(NodePtr node) {
+            node->increaseAccessCount();
             removeFromList(node);
             putGhostRecent(node);
         }
@@ -140,10 +161,14 @@ namespace EasyCache {
         }
 
         void putGhostRecent(NodePtr node) {
+            node->setAccessCount(1);
+
             node->next_ = ghostHead_->next_;
             node->prev_ = ghostHead_;
             ghostHead_->next_ = node;
             ghostHead_->next_->prev_ = node;
+
+            ghostMap_.emplace(node->key_, node);
         }
 
         bool containInMain(const Key& key) {
@@ -154,20 +179,6 @@ namespace EasyCache {
             return ghostMap_.find(key) != ghostMap_.end();
         }
 
-        void increaseCapacity() {
-            capacity_++;
-        }
-
-        bool decreaseCapacity() {
-            if (capacity_ <= 0) {
-                return false;
-            }
-            if (mainMap_.size() >= capacity_ ) {
-                removeLeastRecentInMain();
-            }
-            capacity_--;
-            return true;
-        }
     };
 }
 #endif //CACHE_ARCLRUPART_H
