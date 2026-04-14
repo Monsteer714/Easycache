@@ -51,7 +51,7 @@ namespace EasyCache {
             checkGhost(key);
 
             lru_->put(key, value);
-            if (lfu_->contain(key)) {
+            if (lfu_->containsKey(key)) {
                 lfu_->put(key, value);
             }
         }
