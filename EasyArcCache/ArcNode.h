@@ -11,7 +11,7 @@ namespace EasyCache {
 
     template <typename Key, typename Value>
     class ArcNode {
-    public:
+    private:
         Key key_;
         Value value_;
         size_t accessCount_ = {1};
@@ -58,6 +58,7 @@ namespace EasyCache {
 
         template<typename K, typename V> friend class ArcLruPart;
         template<typename K, typename V> friend class ArcLfuPart;
+        template<typename K, typename V> friend class ArcFreqList;
     };
 };
 #endif //CACHE_ARCNODE_H

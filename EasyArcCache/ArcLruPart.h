@@ -30,7 +30,7 @@ namespace EasyCache {
             updateNodeToRecent(node);
             value = node->getValue();
 
-            shouldTransform = node->getAccessCount() >= transformThreshold_;
+            shouldTransform = node->getAccessCount() > transformThreshold_;
 
             return true;
         }
@@ -154,31 +154,29 @@ namespace EasyCache {
         }
 
         void putMainRecent(NodePtr node) {
-            NodePtr temp = mainHead_->next_;
-            mainHead_->next_ = node;
-            temp->prev_ = node;
-            node->next_ = temp;
+            node->next_ = mainHead_->next_;
             node->prev_ = mainHead_;
+            mainHead_->next_->prev_ = node;
+            mainHead_->next_ = node;
         }
 
         void putGhostRecent(NodePtr node) {
             node->setAccessCount(1);
 
-            NodePtr temp = ghostHead_->next_;
-            ghostHead_->next_ = node;
-            temp->prev_ = node;
-            node->next_ = temp;
+            node->next_ = ghostHead_->next_;
             node->prev_ = ghostHead_;
+            ghostHead_->next_->prev_ = node;
+            ghostHead_->next_ = node;
 
             ghostMap_.emplace(node->key_, node);
         }
 
         bool containInMain(const Key& key) {
-            return mainMap_.find(key) != mainMap_.end();
+            return mainMap_.contains(key);
         }
 
         bool containInGhost(const Key& key) {
-            return ghostMap_.find(key) != ghostMap_.end();
+            return ghostMap_.contains(key);
         }
 
     };

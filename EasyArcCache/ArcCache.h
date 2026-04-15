@@ -14,14 +14,14 @@ namespace EasyCache {
     template <typename Key, typename Value>
     class ArcCache : public EasyCache::EasyCachePolicy<Key, Value> {
     public:
-        ArcCache(unsigned long capacity, unsigned long transformThreshold = 2) : capacity_(capacity),
-                                                                             transformThreshold_(transformThreshold),
-                                                                             lru_(std::make_unique<EasyCache::ArcLruPart<
-                                                                                 Key, Value>>(
-                                                                                 capacity_, transformThreshold_)),
-                                                                             lfu_(std::make_unique<EasyCache::ArcLfuPart<
-                                                                                 Key, Value>>(
-                                                                                 capacity_, transformThreshold_)) {
+        ArcCache(size_t capacity, size_t transformThreshold = 2) : capacity_(capacity),
+                                                                   transformThreshold_(transformThreshold),
+                                                                   lru_(std::make_unique<EasyCache::ArcLruPart<
+                                                                       Key, Value>>(
+                                                                       capacity_, transformThreshold_)),
+                                                                   lfu_(std::make_unique<EasyCache::ArcLfuPart<
+                                                                       Key, Value>>(
+                                                                       capacity_)) {
         }
 
         ~ArcCache() override = default;
@@ -51,10 +51,11 @@ namespace EasyCache {
             checkGhost(key);
 
             lru_->put(key, value);
-            if (lfu_->containsKey(key)) {
+            if (lfu_->containsInMain(key)) {
                 lfu_->put(key, value);
             }
         }
+
     private:
         unsigned long capacity_ = {};
         unsigned long transformThreshold_ = {};
