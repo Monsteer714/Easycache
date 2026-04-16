@@ -135,7 +135,7 @@ namespace EasyCache {
         }
 
         void removeFromListMain(NodePtr node) {
-            auto list = freqMap_[node->accessCount_];
+            auto& list = freqMap_[node->accessCount_];
             list.remove(node);
         }
 

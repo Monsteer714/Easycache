@@ -30,7 +30,7 @@ namespace EasyCache {
             updateNodeToRecent(node);
             value = node->getValue();
 
-            shouldTransform = node->getAccessCount() > transformThreshold_;
+            shouldTransform = node->getAccessCount() >= transformThreshold_;
 
             return true;
         }
